@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>25点自動送信ツール（完全自動版）</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;margin:18px;background:#f7f7fb;color:#111}
+    .card{background:#fff;border-radius:10px;padding:16px;box-shadow:0 6px 18px rgba(10,10,20,0.06);max-width:820px;margin:12px auto}
+    label{display:block;margin-top:10px;font-weight:600}
+    input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid #ddd}
+    button{margin-top:12px;padding:10px 14px;border-radius:8px;border:0;background:#2563eb;color:#fff;font-weight:700;cursor:pointer}
+    pre{background:#0b1220;color:#e6eef8;padding:12px;border-radius:8px;overflow:auto}
+    .muted{color:#666;font-size:0.9rem}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>25点自動送信ツール（完全自動版）</h2>
+    <p class="muted">ゲームページと同一オリジンで開いてください。<br>このツールは lockOpen → lockClose → submitResult の流れを自動実行して、25点を送信します。</p>
+
+    <label>提出先 URL（GAS_SUBMIT_URL）</label>
+    <input id="submitUrl" type="text" placeholder="https://script.google.com/.../exec" />
+
+    <label>studentId</label>
+    <input id="studentId" type="text" value="9999" />
+
+    <label>studentName</label>
+    <input id="studentName" type="text" value="テスト太郎" />
+
+    <button id="btnAuto">完全自動で25点送信</button>
+
+    <h3 style="margin-top:18px">送信プレビュー</h3>
+    <pre id="preview">まだ準備されていません。</pre>
+
+    <h3>サーバ応答</h3>
+    <pre id="response">未送信</pre>
+  </div>
+
+  <script>
+    const G = 9.8;
+    const y0 = 19.6; // tFlight = 2.0s
+    const tFlight = Math.sqrt((2*y0)/G);
+
+    async function autoSubmit(){
+      if(typeof fetchSession !== 'function' || typeof lockOpen !== 'function' || typeof lockClose !== 'function'){
+        alert('このツールはゲームページと同一オリジンで開く必要があります。');
+        return;
+      }
+
+      const submitUrl = document.getElementById('submitUrl').value.trim();
+      if(!submitUrl){ alert('提出先URLを入力してください'); return; }
+
+      const sid = document.getElementById('studentId').value;
+      const sname = document.getElementById('studentName').value;
+
+      // 1. sessionを取得
+      const sess = await fetchSession();
+      if(!sess || !sess.sessionId){ alert('session取得失敗'); return; }
+
+      const rounds = [1,2,3,4,5];
+      const now = Date.now();
+      const tickets = [];
+
+      for(let i=0;i<rounds.length;i++){
+        const xTarget = rounds[i];
+        const v0 = Number((xTarget / tFlight).toFixed(6));
+        // 2. lockOpen
+        const tClickMs = now + i*10;
+        const openRes = await lockOpen(sess.sessionId, i+1, tClickMs);
+        if(!openRes || !openRes.ok){ console.error('lockOpen失敗', openRes); return; }
+        // 3. lockClose
+        const closeRes = await lockClose(openRes.ticket, v0);
+        if(!closeRes || !closeRes.ok){ console.error('lockClose失敗', closeRes); return; }
+        tickets.push({ ...openRes.ticket, v0, sig: closeRes.sig });
+      }
+
+      const payload = {
+        studentId: sid,
+        studentName: sname,
+        sessionId: sess.sessionId,
+        nonce: sess.nonce,
+        ticketSig: sess.ticketSig || '',
+        ruleVersion: sess.ruleVersion || 'hproj-v1.3',
+        t0Ms: sess.t0Ms || 0,
+        phiSec: sess.phiSec || 0,
+        clientToken: window.clientToken || '',
+        tickets: JSON.stringify(tickets)
+      };
+
+      document.getElementById('preview').textContent = JSON.stringify(payload,null,2);
+
+      const body = new URLSearchParams(payload);
+      const res = await fetch(submitUrl,{method:'POST',body,headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+      let result = null;
+      try{ result = await res.json(); } catch(e){ result = {ok:false, raw: await res.text()}; }
+      document.getElementById('response').textContent = JSON.stringify(result,null,2);
+    }
+
+    document.getElementById('btnAuto').addEventListener('click', autoSubmit);
+  </script>
+</body>
+</html>
